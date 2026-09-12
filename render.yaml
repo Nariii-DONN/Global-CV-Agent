@@ -24,5 +24,3 @@ services:
         sync: false
       - key: ADMIN_SECRET_SHA256
         sync: false
-      - key: SESSION_SECRET
-        generateValue: true

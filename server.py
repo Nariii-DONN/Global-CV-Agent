@@ -1,6 +1,6 @@
 import os, re, json, sqlite3, hashlib, hmac, secrets, time, threading, mimetypes, tempfile, csv, io, logging
 from pathlib import Path
-from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl, urlencode
+from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl, parse_qs, urlencode
 from urllib import robotparser
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from email.parser import BytesParser
@@ -15,9 +15,12 @@ try:
 except Exception:
     Document = None
 try:
-    import fitz
+    import pymupdf as fitz
 except Exception:
-    fitz = None
+    try:
+        import fitz
+    except Exception:
+        fitz = None
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -44,7 +47,6 @@ FREE_SEARCH_DELAY = float(os.getenv('FREE_SEARCH_DELAY', '2.0'))
 OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://127.0.0.1:11434').rstrip('/')
 OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', '')
 MAX_CANDIDATES = int(os.getenv('MAX_CANDIDATES_PER_RUN', '60'))
-MAX_AI_RERANK = int(os.getenv('MAX_AI_RERANK', '30'))
 FETCH_WORKERS = int(os.getenv('FETCH_WORKERS', '6'))
 SEARCH_COUNTRY = os.getenv('SEARCH_COUNTRY', 'IN')
 SEARCH_LANGUAGE = os.getenv('SEARCH_LANGUAGE', 'en')
@@ -63,10 +65,6 @@ ADMIN_PHONE_DIGITS=re.sub(r'\D', '', os.getenv('ADMIN_PHONE', ''))
 ADMIN_PASSWORD_SHA256=os.getenv('ADMIN_PASSWORD_SHA256', '').strip().lower()
 ADMIN_SECRET_SHA256=os.getenv('ADMIN_SECRET_SHA256', '').strip().lower()
 SESSION_TIMEOUT=int(os.getenv('SESSION_TIMEOUT_SEC', '43200'))
-SESSION_SECRET=os.getenv('SESSION_SECRET', '')
-if not SESSION_SECRET:
-    SESSION_SECRET=secrets.token_hex(32)
-    log.warning('SESSION_SECRET not set; using ephemeral secret (sessions reset on restart)')
 AUTH_ENABLED=bool(ADMIN_EMAIL and ADMIN_PHONE_DIGITS and ADMIN_PASSWORD_SHA256 and ADMIN_SECRET_SHA256)
 SESSIONS={}
 SESSION_LOCK=threading.Lock()
@@ -89,16 +87,14 @@ DB_LOCK = threading.Lock()
 # ---------- Live event bus (SSE) ----------
 from collections import deque
 LIVE_BUF = deque(maxlen=300)
-LIVE_COND = threading.Condition()
+LIVE_LOCK = threading.Lock()
 LIVE_SEQ = 0
 def live_emit(etype, data=None):
     global LIVE_SEQ
-    evt={'seq':0,'ts':time.time(),'type':etype,'data':data or {}}
-    with LIVE_COND:
-        LIVE_SEQ+=1; evt['seq']=LIVE_SEQ
-        LIVE_BUF.append(evt)
-        LIVE_COND.notify_all()
-    return evt
+    with LIVE_LOCK:
+        LIVE_SEQ+=1
+        LIVE_BUF.append({'seq':LIVE_SEQ,'ts':time.time(),'type':etype,'data':data or {}})
+    return LIVE_BUF[-1]
 
 # ---------- Sessions ----------
 def _req_cookies(headers):
@@ -333,7 +329,6 @@ def _parse_ddg_html(html_text, limit):
         # DDG wraps with //duckduckgo.com/l/?uddg=
         if 'uddg=' in href:
             try:
-                from urllib.parse import parse_qs
                 qs=parse_qs(urlparse(href).query)
                 if qs.get('uddg'): href=qs['uddg'][0]
             except Exception: pass
@@ -734,7 +729,7 @@ def run_search(job_id):
                 if len(candidates_pre)>=MAX_CANDIDATES: break
         candidates_pre.sort(key=lambda t: t[0], reverse=True)
         live_emit('progress',{'run_id':run_id,'job_id':job_id,'stage':'fetch','queries':len(queries),'results':len(results),'downloaded':downloaded,'parsed':parsed,'candidates':0})
-        for idx,(pre_score, x, obj, text) in enumerate(candidates_pre[:MAX_CANDIDATES]):
+        for idx,(_pre, x, obj, text) in enumerate(candidates_pre[:MAX_CANDIDATES]):
             try:
                 cand=extract_candidate(text,x['url']); cand['cv_text']=text[:15000]
                 # skip AI for low pre-score beyond budget
@@ -809,7 +804,6 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith('/api/') and not self._authed():
             return self._json({'error':'login required'},401)
         if self.path=='/api/me': return self._json({'authenticated':True,'name':ADMIN_NAME})
-        if self.path=='/api/live' or self.path.startswith('/api/live?'): return self.sse_live()
         if self.path.startswith('/static/'):
             try:
                 rel=self.path[len('/static/'):].split('?')[0].split('#')[0]
@@ -889,14 +883,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError: limit=15
             cands=qall('SELECT id,name,current_title,score,category,source_url,created_at FROM candidates ORDER BY id DESC LIMIT ?',(limit,))
             runs=qall('SELECT sr.*, j.title as job_title FROM search_runs sr LEFT JOIN jobs j ON j.id=sr.job_id ORDER BY sr.id DESC LIMIT 10')
-            with LIVE_COND:
-                evts=list(LIVE_BUF)[-30:]
+            evts=list(LIVE_BUF)[-30:]
             return self._json({'candidates':cands,'runs':runs,'events':evts})
         if self.path.startswith('/api/export'):
             from urllib.parse import urlparse as _up3, parse_qs as _pqs3
             qs=_pqs3(_up3(self.path).query)
             job_id=qs.get('job_id',[None])[0]
-            fmt=qs.get('format',['csv'])[0]
             if job_id:
                 rows=qall('SELECT c.name,c.email,c.phone,c.location,c.current_title,c.years_experience,c.skills_json,c.source_url,jc.score,jc.category,jc.match_json FROM candidates c JOIN job_candidates jc ON jc.candidate_id=c.id WHERE jc.job_id=? ORDER BY jc.score DESC',(int(job_id),))
             else:
@@ -910,45 +902,6 @@ class Handler(BaseHTTPRequestHandler):
             data=out.getvalue().encode('utf-8')
             self.send_response(200); self.send_header('Content-Type','text/csv; charset=utf-8'); self.send_header('Content-Disposition','attachment; filename="candidates.csv"'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data); return
         return self._send(404,'not found','text/plain')
-    def sse_live(self):
-        from urllib.parse import urlparse as _upl, parse_qs as _pqsl
-        try: last=int((_pqsl(_upl(self.path).query).get('last',['0'])[0] or 0))
-        except ValueError: last=0
-        try:
-            self.send_response(200)
-            self.send_header('Content-Type','text/event-stream')
-            self.send_header('Cache-Control','no-cache')
-            self.send_header('Connection','keep-alive')
-            self.send_header('X-Accel-Buffering','no')
-            self.end_headers()
-        except (BrokenPipeError, ConnectionResetError):
-            return
-        # replay missed buffer
-        try:
-            with LIVE_COND:
-                backlog=[e for e in list(LIVE_BUF) if e['seq']>last]
-            for e in backlog[-100:]:
-                line=f"data: {json.dumps(e, ensure_ascii=False)}\n\n".encode('utf-8')
-                self.wfile.write(line)
-            self.wfile.flush()
-            last=backlog[-1]['seq'] if backlog else last
-            # stream ~55s with heartbeat every 15s (proxies/clients time out otherwise)
-            end=time.time()+55
-            while time.time()<end:
-                with LIVE_COND:
-                    LIVE_COND.wait(timeout=15)
-                    fresh=[e for e in list(LIVE_BUF) if e['seq']>last]
-                    if fresh: last=fresh[-1]['seq']
-                for e in fresh:
-                    self.wfile.write(f"data: {json.dumps(e, ensure_ascii=False)}\n\n".encode('utf-8'))
-                # heartbeat comment keeps connection alive
-                self.wfile.write(b': ping\n\n')
-                self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-        except Exception as e:
-            log.debug('sse closed: %s', e)
-        return
     def do_POST(self):
         if self.path=='/api/login': return self.login()
         if self.path=='/api/logout': return self.logout()

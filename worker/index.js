@@ -21,7 +21,6 @@ export class AgentContainer extends Container {
 		MAX_QUERIES_PER_JD: "25",
 		RESULTS_PER_QUERY: "10",
 		MAX_CANDIDATES_PER_RUN: "60",
-		MAX_AI_RERANK: "30",
 		FETCH_WORKERS: "6",
 		SEARCH_COUNTRY: "IN",
 		SEARCH_LANGUAGE: "en",
@@ -32,7 +31,6 @@ export class AgentContainer extends Container {
 		ADMIN_PHONE: env.ADMIN_PHONE || "",
 		ADMIN_PASSWORD_SHA256: env.ADMIN_PASSWORD_SHA256 || "",
 		ADMIN_SECRET_SHA256: env.ADMIN_SECRET_SHA256 || "",
-		SESSION_SECRET: env.SESSION_SECRET || "",
 		SESSION_TIMEOUT_SEC: "43200",
 	};
 }

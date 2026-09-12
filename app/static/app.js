@@ -1,4 +1,4 @@
-const state={jobs:[],jobId:null,job:null,candidates:[],tab:'ALL',busy:false,config:{},q:'',minScore:0,pollTimer:null,live:{connected:false,events:[],runs:[],ticker:[],lastSeq:0,fallbackTimer:null}};
+const state={jobs:[],jobId:null,candidates:[],tab:'ALL',config:{},q:'',minScore:0,pollTimer:null,live:{runs:[],lastSeq:0,fallbackTimer:null}};
 const el=s=>document.querySelector(s);
 async function api(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/';throw new Error('login required');}if(!r.ok)throw new Error(await r.text());return r.json();}
 function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
@@ -13,7 +13,7 @@ document.querySelector('#app').innerHTML=`
 <main class="content">
 <div class="top"><div><div class="h1">Candidate Discovery</div><div class="sub">Upload a JD (PDF/DOCX/TXT) and turn permitted web sources into ranked leads.</div></div><button class="btn primary" onclick="newJD()">Upload JD</button></div>
 <section id="live" class="card" style="margin-bottom:18px">
-<div class="top" style="margin-bottom:10px"><div><h3 style="margin:0">Live tracking <span id="liveDot" class="livedot off" title="stream status"></span></h3><div class="sub" id="liveSub">Connecting to live stream…</div></div>
+<div class="top" style="margin-bottom:10px"><div><h3 style="margin:0">Live tracking <span id="liveDot" class="livedot off" title="refresh status"></span></h3><div class="sub" id="liveSub">Auto-refresh every 5s…</div></div>
 <div style="display:flex;gap:8px;align-items:center"><select id="runSel" onchange="selectRun(this.value)" style="background:#0d131d;color:#fff;border:1px solid #273245;border-radius:10px;padding:8px 10px;max-width:280px"></select><button class="btn" onclick="loadRuns()">↻</button></div></div>
 <div class="livebars" id="liveBars"></div>
 <div class="livegrid">
@@ -34,7 +34,7 @@ function setupUpload(){const d=el('#drop'),f=el('#file'),a=el('#analyze');if(!d|
 async function loadConfig(){try{state.config=await api('/api/config');const c=state.config;el('#cfg').innerHTML=`Free-web ${c.free_web?'✓':'—'} &nbsp; Ollama ${c.ollama?esc(c.ollama_model||'✓'):'—'} &nbsp; OpenAI ${c.openai?'✓':'—'}<br>Serper ${c.serper?'✓':'—'} &nbsp; Brave ${c.brave?'✓':'—'} &nbsp; Bing ${c.bing?'✓':'—'}`;if(state.minScore===0&&c.min_score)state.minScore=c.min_score;}catch{}}
 async function refreshJobs(){try{state.jobs=await api('/api/jobs');const sel=el('#jobSel'),jl=el('#jobList');if(sel){sel.innerHTML=`<option value="">All jobs</option>`+state.jobs.map(j=>`<option value="${j.id}" ${String(state.jobId)===String(j.id)?'selected':''}>#${j.id} ${esc(j.title)}</option>`).join('');}if(jl){jl.innerHTML=state.jobs.slice(0,8).map(j=>`<button class="tab ${String(state.jobId)===String(j.id)?'active':''}" onclick="selectJob('${j.id}')">#${j.id} ${esc((j.title||'Job').slice(0,24))}</button>`).join('')||'<span class="sub">No jobs yet</span>';}}catch(e){console.error(e)}}
 function selectJob(id){state.jobId=id||null;refresh();}
-async function uploadJD(){const f=el('#file').files[0];if(!f)return;const fd=new FormData();fd.append('file',f);el('#analyze').disabled=true;el('#analyze').textContent='Reading…';try{const r=await fetch('/api/jobs',{method:'POST',body:fd});const d=await r.json();if(d.error)throw new Error(d.error);state.job=d;state.jobId=d.job_id;renderJD(d.requirements);await api('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:d.job_id})});el('#analyze').textContent='Search started — watch Live tracking';await refreshJobs();await loadRuns();startPoll();}catch(e){alert(e.message);el('#analyze').disabled=false;el('#analyze').textContent='Analyze JD';}}
+async function uploadJD(){const f=el('#file').files[0];if(!f)return;const fd=new FormData();fd.append('file',f);el('#analyze').disabled=true;el('#analyze').textContent='Reading…';try{const r=await fetch('/api/jobs',{method:'POST',body:fd});const d=await r.json();if(d.error)throw new Error(d.error);state.jobId=d.job_id;renderJD(d.requirements);await api('/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:d.job_id})});el('#analyze').textContent='Search started — watch Live tracking';await refreshJobs();await loadRuns();startPoll();}catch(e){alert(e.message);el('#analyze').disabled=false;el('#analyze').textContent='Analyze JD';}}
 function renderJD(j){if(!j)return;el('#jdOut').innerHTML=`<div class="req"><div class="reqbox"><h4>${esc(j.title||'Job')}</h4><div class="meta">Minimum experience: ${esc(j.minimum_years||0)} years</div><div class="chips">${(j.locations||[]).map(x=>`<span class="chip">${esc(x)}</span>`).join('')}</div></div><div class="reqbox"><h4>Requirements</h4><ul>${(j.must_have||[]).slice(0,10).map(x=>`<li>${esc(x)}</li>`).join('')||'<li>None detected</li>'}</ul>${(j.preferred||[]).length?`<div class="meta">Preferred: ${j.preferred.slice(0,5).map(esc).join(', ')}</div>`:''}</div></div>`;}
 function startPoll(){stopPoll();let n=0;state.pollTimer=setInterval(async()=>{await refresh();n++;const run=state.lastRun;if(run&&(run.status==='DONE'||run.status==='ERROR')||n>120)stopPoll();},3000);}
 function stopPoll(){if(state.pollTimer){clearInterval(state.pollTimer);state.pollTimer=null;}}
@@ -46,8 +46,8 @@ function scrollToCandidates(){el('#results').scrollIntoView({behavior:'smooth'})
 function scrollToLive(){el('#live').scrollIntoView({behavior:'smooth'});}
 function newJD(){const f=el('#file');if(f)f.click();}
 async function logout(){try{await fetch('/api/logout',{method:'POST'});}catch{}location.href='/';}
-// ---------- Live tracking ----------
-let liveES=null, refreshDeb=null;
+// ---------- Live tracking (auto-refresh every 5s) ----------
+let refreshDeb=null;
 function setLiveStatus(on,msg){const d=el('#liveDot'),s=el('#liveSub');if(d){d.className='livedot '+(on?'on':'off');}if(s&&msg)s.textContent=msg;}
 function renderLiveBars(run){const b=el('#liveBars');if(!b)return;if(!run){b.innerHTML=`<div class="sub">No runs yet — upload a JD to start live tracking.</div>`;return;}const max=Math.max(1,run.queries||0,run.results||0,run.downloaded||0,run.parsed||0,run.candidates||0);const row=(l,v)=>`<div class="bar"><span>${l}</span><div class="track"><div class="fill" style="width:${Math.min(100,Math.round(100*v/max))}%"></div></div><b>${v||0}</b></div>`;b.innerHTML=`<div class="runline"><span class="pill ${String(run.status||'').toLowerCase()}">${esc(run.status||'')}</span><span class="sub">run #${run.id} · job #${run.job_id} · ${esc(run.started_at||'')}</span></div>`+row('Queries',run.queries)+row('Results',run.results)+row('Downloaded',run.downloaded)+row('Parsed',run.parsed)+row('Candidates',run.candidates);}
 function pushFeed(html){const f=el('#liveFeed');if(!f)return;if(f.querySelector('.empty'))f.innerHTML='';const d=document.createElement('div');d.className='feeditem';d.innerHTML=html;f.prepend(d);while(f.children.length>40)f.lastChild.remove();}
@@ -60,14 +60,7 @@ else if(e.type==='run_error'){pushFeed(label+` — ERROR ${esc(d.error||'')}`);s
 else if(e.type==='run_started'){pushFeed(label+` — started “${esc(d.title||'')}”`);setLiveStatus(true,'Live · search running');loadRuns();}
 else{pushFeed(label);}}
 function scheduleRefresh(){if(refreshDeb)clearTimeout(refreshDeb);refreshDeb=setTimeout(refresh,1500);}
-function connectLive(){if(liveES){try{liveES.close();}catch{}}if(state.live.fallbackTimer){clearInterval(state.live.fallbackTimer);state.live.fallbackTimer=null;}try{
-const url='/api/live'+(state.live.lastSeq?`?last=${state.live.lastSeq}`:'');
-liveES=new EventSource(url);
-liveES.onopen=()=>setLiveStatus(true,'Live · connected (SSE)');
-liveES.onmessage=ev=>{try{handleLiveEvent(JSON.parse(ev.data));}catch{}};
-liveES.onerror=()=>{setLiveStatus(false,'Live stream interrupted — fallback polling every 4s');try{liveES.close();}catch{}startLiveFallback();};
-}catch{startLiveFallback();}}
-function startLiveFallback(){if(state.live.fallbackTimer)return;setLiveStatus(false,'Live · polling fallback (4s)');state.live.fallbackTimer=setInterval(async()=>{try{const a=await api('/api/activity?limit=10');(a.events||[]).forEach(e=>{if(e.seq>state.live.lastSeq)handleLiveEvent(e);});}catch{}},4000);}
+function connectLive(){if(state.live.fallbackTimer){clearInterval(state.live.fallbackTimer);state.live.fallbackTimer=null;}setLiveStatus(true,'Auto-refresh · every 5s');const tick=async()=>{try{const a=await api('/api/activity?limit=10');(a.events||[]).forEach(e=>{if(e.seq>state.live.lastSeq)handleLiveEvent(e);});await refresh();await loadRuns();}catch{}};tick();state.live.fallbackTimer=setInterval(tick,5000);}
 async function loadRuns(){try{const q=state.jobId?`?job_id=${encodeURIComponent(state.jobId)}&limit=20`:'?limit=20';const runs=await api('/api/runs'+q);state.live.runs=runs;const sel=el('#runSel'),hist=el('#runHist');if(sel){sel.innerHTML=runs.map(r=>`<option value="${r.id}">run #${r.id} · job #${r.job_id} · ${esc(r.status||'')} · ${r.candidates||0} cands</option>`).join('')||'<option value="">No runs</option>';}if(hist){hist.innerHTML=runs.slice(0,8).map(r=>`<div class="runrow"><span class="pill ${String(r.status||'').toLowerCase()}">${esc(r.status||'')}</span><span>#${r.id} · ${esc(r.job_title||('job #'+r.job_id))}</span><span class="sub">${r.candidates||0} cands · ${esc(r.started_at||'')}</span></div>`).join('')||'<div class="empty">No runs yet.</div>';}if(runs[0])renderLiveBars(runs[0]);}catch(e){console.error(e)}}
 function selectRun(id){const r=(state.live.runs||[]).find(x=>String(x.id)===String(id));if(r)renderLiveBars(r);}
 render();

@@ -76,7 +76,7 @@ Candidate records retain source URL, source type, extracted profile data, origin
 
 1. Push this repo to GitHub.
 2. Go to **dashboard.render.com → New → Blueprint**, select the repo, confirm.
-3. Fill the prompted secrets (`ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD_SHA256`, `ADMIN_SECRET_SHA256`; `SESSION_SECRET` auto-generates). Hash values with `python -c "import hashlib; print(hashlib.sha256('VALUE'.encode()).hexdigest())"`.
+3. Fill the prompted secrets (`ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD_SHA256`, `ADMIN_SECRET_SHA256`). Hash values with `python -c "import hashlib; print(hashlib.sha256('VALUE'.encode()).hexdigest())"`.
 4. Deploy, open the URL, sign in.
 
 Notes:
@@ -109,7 +109,7 @@ Prerequisites (one time):
 2. Install JS deps: `npm install`
 3. Log in: `npx wrangler login`
 4. Set the admin secrets (values stay in Cloudflare, never in git):
-   `npx wrangler secret put ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD_SHA256`, `ADMIN_SECRET_SHA256`, `SESSION_SECRET`
+   `npx wrangler secret put ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD_SHA256`, `ADMIN_SECRET_SHA256`
    (For the two `*_SHA256` values, hash with `python -c "import hashlib; print(hashlib.sha256('VALUE'.encode()).hexdigest())"`.)
 
 Build + deploy command:
@@ -128,7 +128,7 @@ Validate without deploying: `npm run build`. Watch logs: `npm run tail`.
 2. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
    - `CLOUDFLARE_API_TOKEN` = the token
    - `CLOUDFLARE_ACCOUNT_ID` = your account ID (Workers overview page URL)
-3. Set the six app secrets once (they persist across deploys): `npx wrangler secret put ADMIN_NAME` (repeat for `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD_SHA256`, `ADMIN_SECRET_SHA256`, `SESSION_SECRET`).
+3. Set the five app secrets once (they persist across deploys): `npx wrangler secret put ADMIN_NAME` (repeat for `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD_SHA256`, `ADMIN_SECRET_SHA256`).
 4. Push to `main` and watch the run under the repo's **Actions** tab.
 
 Alternative with zero files/secrets: **Workers & Pages → your Worker → Settings → Builds**, connect this repo, set deploy command `npx wrangler deploy`.
