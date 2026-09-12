@@ -1,13 +1,13 @@
 const state={jobs:[],jobId:null,job:null,candidates:[],tab:'ALL',busy:false,config:{},q:'',minScore:0,pollTimer:null,live:{connected:false,events:[],runs:[],ticker:[],lastSeq:0,fallbackTimer:null}};
 const el=s=>document.querySelector(s);
-async function api(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(await r.text());return r.json();}
+async function api(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/';throw new Error('login required');}if(!r.ok)throw new Error(await r.text());return r.json();}
 function esc(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function timeAgo(ts){try{const t=typeof ts==='number'?(ts>1e12?ts:ts*1000):Date.parse(ts);const d=Date.now()-t;if(d<60e3)return Math.floor(d/1e3)+'s ago';if(d<3600e3)return Math.floor(d/60e3)+'m ago';return new Date(t).toLocaleString();}catch{return '';}}
 function render(){
 document.querySelector('#app').innerHTML=`
 <div class="shell">
 <aside class="side"><div class="brand"><div class="logo">◎</div>Global CV Agent</div>
-<div class="nav"><button class="active">⌂ Overview</button><button onclick="scrollToLive()">● Live tracking</button><button onclick="scrollToCandidates()">♢ Candidates</button><button onclick="newJD()">＋ New JD</button></div>
+<div class="nav"><button class="active">⌂ Overview</button><button onclick="scrollToLive()">● Live tracking</button><button onclick="scrollToCandidates()">♢ Candidates</button><button onclick="newJD()">＋ New JD</button><button onclick="logout()">⏻ Logout</button></div>
 <div style="margin-top:18px" class="notice">Free mode: public web only, respects robots.txt. No login-wall bypass.</div>
 <div style="margin-top:12px" class="notice"><b>Jobs</b><div id="jobList" style="margin-top:8px;display:grid;gap:6px"></div></div></aside>
 <main class="content">
@@ -45,6 +45,7 @@ function exportCSV(){const q=state.jobId?`?job_id=${encodeURIComponent(state.job
 function scrollToCandidates(){el('#results').scrollIntoView({behavior:'smooth'});}
 function scrollToLive(){el('#live').scrollIntoView({behavior:'smooth'});}
 function newJD(){const f=el('#file');if(f)f.click();}
+async function logout(){try{await fetch('/api/logout',{method:'POST'});}catch{}location.href='/';}
 // ---------- Live tracking ----------
 let liveES=null, refreshDeb=null;
 function setLiveStatus(on,msg){const d=el('#liveDot'),s=el('#liveSub');if(d){d.className='livedot '+(on?'on':'off');}if(s&&msg)s.textContent=msg;}

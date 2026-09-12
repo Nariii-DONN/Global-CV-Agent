@@ -1,0 +1,18 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "global-cv-agent",
+	"main": "worker/index.js",
+	"compatibility_date": "2026-09-01",
+	"containers": [
+		{
+			"class_name": "AgentContainer",
+			"image": "./Dockerfile",
+			"max_instances": 1
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "AGENT", "class_name": "AgentContainer" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["AgentContainer"] }],
+	"observability": { "enabled": true }
+}

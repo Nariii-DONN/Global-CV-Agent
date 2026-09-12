@@ -1,0 +1,15 @@
+{
+	"name": "global-cv-agent",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"build": "wrangler deploy --dry-run",
+		"tail": "wrangler tail"
+	},
+	"devDependencies": {
+		"@cloudflare/containers": "0.3.7",
+		"wrangler": "4.131.1"
+	}
+}

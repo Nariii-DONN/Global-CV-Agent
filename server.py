@@ -1,4 +1,4 @@
-import os, re, json, sqlite3, hashlib, time, threading, mimetypes, tempfile, csv, io, logging
+import os, re, json, sqlite3, hashlib, hmac, secrets, time, threading, mimetypes, tempfile, csv, io, logging
 from pathlib import Path
 from urllib.parse import urlparse, urljoin, urlunparse, parse_qsl, urlencode
 from urllib import robotparser
@@ -53,6 +53,24 @@ SEARCH_LANGUAGE = os.getenv('SEARCH_LANGUAGE', 'en')
 SKIP_FETCH_DOMAINS = set((os.getenv('SKIP_FETCH_DOMAINS', 'linkedin.com,indeed.com,glassdoor.com,monster.com,ziprecruiter.com,facebook.com,instagram.com').lower().split(',')))
 # Skip binary / media URLs early
 SKIP_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.mp4', '.mp3', '.avi', '.mov', '.zip', '.rar', '.exe', '.css', '.js', '.ico', '.woff', '.woff2', '.ttf')
+
+# ---------- Admin-only access ----------
+# Credentials live in .env (never committed). Password / secret code are stored
+# as SHA-256 hex digests only — the server never sees plaintext at rest.
+ADMIN_NAME=os.getenv('ADMIN_NAME', '').strip()
+ADMIN_EMAIL=os.getenv('ADMIN_EMAIL', '').strip().lower()
+ADMIN_PHONE_DIGITS=re.sub(r'\D', '', os.getenv('ADMIN_PHONE', ''))
+ADMIN_PASSWORD_SHA256=os.getenv('ADMIN_PASSWORD_SHA256', '').strip().lower()
+ADMIN_SECRET_SHA256=os.getenv('ADMIN_SECRET_SHA256', '').strip().lower()
+SESSION_TIMEOUT=int(os.getenv('SESSION_TIMEOUT_SEC', '43200'))
+SESSION_SECRET=os.getenv('SESSION_SECRET', '')
+if not SESSION_SECRET:
+    SESSION_SECRET=secrets.token_hex(32)
+    log.warning('SESSION_SECRET not set; using ephemeral secret (sessions reset on restart)')
+AUTH_ENABLED=bool(ADMIN_EMAIL and ADMIN_PHONE_DIGITS and ADMIN_PASSWORD_SHA256 and ADMIN_SECRET_SHA256)
+SESSIONS={}
+SESSION_LOCK=threading.Lock()
+FAILED_LOGINS={}
 ROBOTS_CACHE = {}
 ROBOTS_TTL = 24 * 3600
 
@@ -81,6 +99,46 @@ def live_emit(etype, data=None):
         LIVE_BUF.append(evt)
         LIVE_COND.notify_all()
     return evt
+
+# ---------- Sessions ----------
+def _req_cookies(headers):
+    out={}
+    try:
+        for part in (headers.get('Cookie') or '').split(';'):
+            if '=' in part:
+                k, v=part.strip().split('=', 1); out[k.strip()]=v.strip()
+    except Exception: pass
+    return out
+
+def _session_valid(headers):
+    tok=_req_cookies(headers).get('gca_session', '')
+    if not tok: return False
+    with SESSION_LOCK:
+        s=SESSIONS.get(tok)
+        if not s: return False
+        if s[0] < time.time():
+            SESSIONS.pop(tok, None); return False
+        return True
+
+def _verify_admin(name, email, phone, password, secret):
+    if not AUTH_ENABLED: return False
+    if (email or '').strip().lower() != ADMIN_EMAIL: return False
+    if (name or '').strip().lower() != ADMIN_NAME.strip().lower(): return False
+    if not ADMIN_PHONE_DIGITS or re.sub(r'\D', '', phone or '') != ADMIN_PHONE_DIGITS: return False
+    ph=hashlib.sha256((password or '').encode('utf-8')).hexdigest()
+    sh=hashlib.sha256((secret or '').encode('utf-8')).hexdigest()
+    return hmac.compare_digest(ph, ADMIN_PASSWORD_SHA256) and hmac.compare_digest(sh, ADMIN_SECRET_SHA256)
+
+def _login_blocked(ip):
+    now=time.time()
+    with SESSION_LOCK:
+        lst=[t for t in FAILED_LOGINS.get(ip, []) if now - t < 300]
+        FAILED_LOGINS[ip]=lst
+        return len(lst) >= 5
+
+def _login_failed(ip):
+    with SESSION_LOCK:
+        FAILED_LOGINS.setdefault(ip, []).append(time.time())
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS jobs(
@@ -699,6 +757,34 @@ def run_search(job_id):
 # ---------- HTTP ----------
 HTML_INDEX='''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Global CV Agent</title><link rel="stylesheet" href="/static/app.css"></head><body><div id="app"></div><script src="/static/app.js"></script></body></html>'''
 
+LOGIN_HTML='''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in — Global CV Agent</title><style>
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:radial-gradient(circle at 20% 0%,#17213b 0,#080b12 35%),#080b12;color:#f4f7fb;min-height:100vh;display:grid;place-items:center;padding:20px}
+.card{width:100%;max-width:420px;background:linear-gradient(180deg,rgba(20,27,40,.95),rgba(12,17,26,.96));border:1px solid #273245;border-radius:18px;padding:28px;box-shadow:0 14px 40px #00000040}
+.brand{display:flex;gap:11px;align-items:center;font-weight:800;font-size:19px;margin-bottom:6px}.logo{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,#6d7cff,#8e67ff 65%,#4de0bc);display:grid;place-items:center}
+.sub{color:#9ba8ba;font-size:13px;margin-bottom:20px}label{display:block;font-size:12px;color:#9ba8ba;margin:12px 0 5px}input{width:100%;background:#0d131d;color:#fff;border:1px solid #273245;border-radius:10px;padding:10px 12px;font:inherit}input:focus{outline:none;border-color:#6d7cff}
+button{width:100%;margin-top:20px;border:1px solid #6d7cff77;background:linear-gradient(135deg,#6d7cff,#785cf2);color:#fff;padding:12px;border-radius:11px;cursor:pointer;font-weight:700;font-size:15px}button:disabled{opacity:.6;cursor:wait}
+.err{display:none;margin-top:14px;padding:10px 12px;border:1px solid #7a2b36;border-radius:10px;background:#2a1218;color:#ff9aa5;font-size:13px}.lock{margin-top:16px;text-align:center;color:#7f8ca0;font-size:11px}
+</style></head><body><div class="card"><div class="brand"><div class="logo">◎</div>Global CV Agent</div>
+<div class="sub">Restricted access — administrator sign-in required.</div>
+<div class="err" id="err"></div>
+<label for="name">Full name</label><input id="name" autocomplete="name" placeholder="Your full name">
+<label for="email">Email</label><input id="email" type="email" autocomplete="username" placeholder="you@example.com">
+<label for="phone">Phone</label><input id="phone" type="tel" autocomplete="tel" placeholder="+91 ...">
+<label for="password">Password</label><input id="password" type="password" autocomplete="current-password" placeholder="••••••••">
+<label for="secret">Secret code</label><input id="secret" type="password" placeholder="••••••">
+<button id="go" onclick="doLogin()">Sign in</button>
+<div class="lock">Single-administrator system. All fields are verified.</div></div>
+<script>
+async function doLogin(){
+var e=document.getElementById('err');e.style.display='none';
+var b=document.getElementById('go');b.disabled=true;b.textContent='Verifying…';
+var body={name:document.getElementById('name').value,email:document.getElementById('email').value,phone:document.getElementById('phone').value,password:document.getElementById('password').value,secret_code:document.getElementById('secret').value};
+try{var r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+var d=await r.json();if(!r.ok)throw new Error(d.error||'Sign-in failed');location.href='/';}
+catch(err){e.textContent=err.message;e.style.display='block';b.disabled=false;b.textContent='Sign in';}}
+document.addEventListener('keydown',function(ev){if(ev.key==='Enter')doLogin();});
+</script></body></html>'''
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log.info('%s %s', self.address_string(), fmt % args)
@@ -706,8 +792,16 @@ class Handler(BaseHTTPRequestHandler):
         b=body.encode() if isinstance(body,str) else body
         self.send_response(code); self.send_header('Content-Type',ctype); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b)
     def _json(self,obj,code=200): self._send(code,json.dumps(obj,ensure_ascii=False),'application/json; charset=utf-8')
+    def _authed(self):
+        return _session_valid(self.headers)
     def do_GET(self):
-        if self.path=='/' or self.path=='/index.html' or self.path=='/dashboard' or self.path.startswith('/dashboard?'): return self._send(200,HTML_INDEX,'text/html; charset=utf-8')
+        if self.path=='/' or self.path=='/index.html' or self.path=='/dashboard' or self.path.startswith('/dashboard?'):
+            if self._authed(): return self._send(200,HTML_INDEX,'text/html; charset=utf-8')
+            return self._send(200,LOGIN_HTML,'text/html; charset=utf-8')
+        if self.path=='/api/login': return self._json({'ok':False,'error':'use POST'},405)
+        if self.path.startswith('/api/') and not self._authed():
+            return self._json({'error':'login required'},401)
+        if self.path=='/api/me': return self._json({'authenticated':True,'name':ADMIN_NAME})
         if self.path=='/api/live' or self.path.startswith('/api/live?'): return self.sse_live()
         if self.path.startswith('/static/'):
             try:
@@ -849,6 +943,9 @@ class Handler(BaseHTTPRequestHandler):
             log.debug('sse closed: %s', e)
         return
     def do_POST(self):
+        if self.path=='/api/login': return self.login()
+        if self.path=='/api/logout': return self.logout()
+        if not self._authed(): return self._json({'error':'login required'},401)
         if self.path=='/api/jobs': return self.create_job()
         if self.path=='/api/search':
             try:
@@ -870,6 +967,42 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({'ok':True})
             except Exception as e: return self._json({'error':str(e)},400)
         return self._json({'error':'not found'},404)
+    def login(self):
+        try:
+            ln=int(self.headers.get('Content-Length', '0')); data=json.loads(self.rfile.read(ln) or b'{}')
+        except Exception:
+            return self._json({'error': 'invalid request'}, 400)
+        ip=self.client_address[0] if self.client_address else 'unknown'
+        if _login_blocked(ip):
+            return self._json({'error': 'too many attempts, try again in a few minutes'}, 429)
+        if not AUTH_ENABLED:
+            return self._json({'error': 'admin account is not configured on the server'}, 503)
+        ok=_verify_admin(data.get('name'), data.get('email'), data.get('phone'), data.get('password'), data.get('secret_code') or data.get('secretCode'))
+        if not ok:
+            _login_failed(ip); time.sleep(0.5)
+            return self._json({'error': 'invalid credentials'}, 401)
+        tok=secrets.token_urlsafe(32)
+        with SESSION_LOCK:
+            SESSIONS[tok]=(time.time() + SESSION_TIMEOUT, ADMIN_NAME)
+            FAILED_LOGINS.pop(ip, None)
+            # opportunistic cleanup
+            try:
+                now=time.time()
+                for k in [k for k, v in SESSIONS.items() if v[0] < now]: SESSIONS.pop(k, None)
+            except Exception: pass
+        body=json.dumps({'ok': True, 'name': ADMIN_NAME}).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Set-Cookie', f'gca_session={tok}; HttpOnly; Path=/; SameSite=Lax; Max-Age={SESSION_TIMEOUT}')
+        self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+    def logout(self):
+        tok=_req_cookies(self.headers).get('gca_session', '')
+        with SESSION_LOCK: SESSIONS.pop(tok, None)
+        body=json.dumps({'ok': True}).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Set-Cookie', 'gca_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0')
+        self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
     def create_job(self):
         ctype=self.headers.get('Content-Type','')
         ln=int(self.headers.get('Content-Length','0')); body=self.rfile.read(ln)

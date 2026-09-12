@@ -1,0 +1,10 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+.freebuff/
+.wrangler/
+node_modules/
+data/
+.env
+.gitignore

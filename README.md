@@ -69,3 +69,43 @@ The result set is deduplicated before documents are fetched.
 - `search_runs`
 
 Candidate records retain source URL, source type, extracted profile data, original document path (when fetched), match score and match evidence.
+
+## Host on Cloudflare (Containers)
+
+The app runs as a container behind a tiny Worker (`worker/index.js`, routed as a single stateful instance). `wrangler deploy` builds the image, pushes it, and deploys both.
+
+Prerequisites (one time):
+
+1. Install [Docker Desktop](https://docs.docker.com/get-started/get-docker/) and make sure it is running (`docker info` must succeed).
+2. Install JS deps: `npm install`
+3. Log in: `npx wrangler login`
+4. Set the admin secrets (values stay in Cloudflare, never in git):
+   `npx wrangler secret put ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD_SHA256`, `ADMIN_SECRET_SHA256`, `SESSION_SECRET`
+   (For the two `*_SHA256` values, hash with `python -c "import hashlib; print(hashlib.sha256('VALUE'.encode()).hexdigest())"`.)
+
+Build + deploy command:
+
+```powershell
+npm run deploy
+```
+
+Validate without deploying: `npm run build`. Watch logs: `npm run tail`.
+
+## Auto-deploy on git push
+
+`.github/workflows/deploy.yml` deploys on every push to `main` (plus a manual Run button). Runners have Docker, so no local Docker needed. One-time setup:
+
+1. Cloudflare dashboard → **My Profile → API Tokens → Create Token** (start from the **Edit Cloudflare Workers** template; if a deploy fails on permissions, add the Containers scope the error names) → copy the token.
+2. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
+   - `CLOUDFLARE_API_TOKEN` = the token
+   - `CLOUDFLARE_ACCOUNT_ID` = your account ID (Workers overview page URL)
+3. Set the six app secrets once (they persist across deploys): `npx wrangler secret put ADMIN_NAME` (repeat for `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD_SHA256`, `ADMIN_SECRET_SHA256`, `SESSION_SECRET`).
+4. Push to `main` and watch the run under the repo's **Actions** tab.
+
+Alternative with zero files/secrets: **Workers & Pages → your Worker → Settings → Builds**, connect this repo, set deploy command `npx wrangler deploy`.
+
+Notes:
+
+- First request cold-boots the container (up to ~60s); retry the login page once if it happens.
+- SQLite + uploads live on the container disk: they survive sleeps but reset on redeploy. Use Export CSV for backups.
+- Cost: the container sleeps after 30 min idle (`sleepAfter` in `worker/index.js`); usage billing applies while running.
