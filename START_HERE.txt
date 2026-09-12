@@ -1,0 +1,23 @@
+GLOBAL CV AGENT — ZERO-COST EDITION
+
+What you need from your side right now:
+1) A Job Description PDF to upload in the web UI.
+2) Nothing else is required for the no-key mode.
+
+Optional (still no cloud/API bill):
+- Install Ollama and a local instruct model, then set OLLAMA_MODEL in .env.
+- Add any official/licensed source credentials you already have; the app does not require them.
+
+Windows:
+  python -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  pip install -r requirements.txt
+  copy .env.example .env
+  python server.py
+
+Open:
+  http://127.0.0.1:8787
+
+The free mode searches the public web as far as the available public index/source access allows. It does not bypass logins, CAPTCHAs, paywalls, private databases, anti-bot controls, or site restrictions.
+
+For Indeed / Monster / ZipRecruiter / Glassdoor / LinkedIn, public indexed pages may be discovered, but private recruiter-only resume databases require the source's permitted integration/account workflow.
