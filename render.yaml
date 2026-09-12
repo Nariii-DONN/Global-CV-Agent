@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: global-cv-agent
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server.py
+    healthCheckPath: /
+    envVars:
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      # Fill once in the Render dashboard (never commit real values).
+      - key: ADMIN_NAME
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PHONE
+        sync: false
+      # SHA-256 hex of password / secret code:
+      # python -c "import hashlib; print(hashlib.sha256('VALUE'.encode()).hexdigest())"
+      - key: ADMIN_PASSWORD_SHA256
+        sync: false
+      - key: ADMIN_SECRET_SHA256
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true

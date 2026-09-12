@@ -794,6 +794,13 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self,obj,code=200): self._send(code,json.dumps(obj,ensure_ascii=False),'application/json; charset=utf-8')
     def _authed(self):
         return _session_valid(self.headers)
+    def do_HEAD(self):
+        # Health/port scanners (Render, load balancers) probe with HEAD.
+        p=self.path
+        known=(p=='/' or p=='/index.html' or p=='/dashboard' or p.startswith('/dashboard?')
+               or p.startswith('/static/') or p.startswith('/api/'))
+        self.send_response(200 if known else 404)
+        self.send_header('Content-Length','0'); self.end_headers()
     def do_GET(self):
         if self.path=='/' or self.path=='/index.html' or self.path=='/dashboard' or self.path.startswith('/dashboard?'):
             if self._authed(): return self._send(200,HTML_INDEX,'text/html; charset=utf-8')
@@ -1035,6 +1042,6 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({'ok':True,'job_id':jid,'requirements':jd})
 
 if __name__=='__main__':
-    host=os.getenv('APP_HOST','127.0.0.1'); port=int(os.getenv('APP_PORT','8787'))
+    host=os.getenv('APP_HOST','127.0.0.1'); port=int(os.getenv('PORT', os.getenv('APP_PORT','8787')))
     print(f'Global CV Agent: http://{host}:{port}')
     ThreadingHTTPServer((host,port),Handler).serve_forever()

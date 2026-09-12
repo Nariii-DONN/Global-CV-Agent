@@ -70,7 +70,36 @@ The result set is deduplicated before documents are fetched.
 
 Candidate records retain source URL, source type, extracted profile data, original document path (when fetched), match score and match evidence.
 
-## Host on Cloudflare (Containers)
+## Host free on Render ($0, permanent phone link)
+
+`render.yaml` defines a free Python web service. You get a permanent `https://global-cv-agent.onrender.com` link for your phone.
+
+1. Push this repo to GitHub.
+2. Go to **dashboard.render.com → New → Blueprint**, select the repo, confirm.
+3. Fill the prompted secrets (`ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PHONE`, `ADMIN_PASSWORD_SHA256`, `ADMIN_SECRET_SHA256`; `SESSION_SECRET` auto-generates). Hash values with `python -c "import hashlib; print(hashlib.sha256('VALUE'.encode()).hexdigest())"`.
+4. Deploy, open the URL, sign in.
+
+Notes:
+
+- Free instances sleep after ~15 min idle; first load takes ~30–60s to wake. Keep the dashboard open during long searches so the run isn't interrupted.
+- Disks are ephemeral on free: redeploys/restarts wipe SQLite + uploads. Use Export CSV for backups.
+
+## Host free via Cloudflare Tunnel ($0, no paid plan)
+
+Your PC runs the app; Cloudflare exposes it on a public `https://` URL. No Docker needed.
+
+1. Install once: `winget install --id Cloudflare.cloudflared`
+2. Double-click `tunnel.bat` (or run it). It starts the server and prints your public URL.
+3. Open the URL and sign in with your admin account. Keep the window open while using it.
+
+Notes:
+
+- The quick-tunnel URL is random and changes on restart. For a stable address, add your domain to Cloudflare and create a named tunnel (`cloudflared tunnel login`, `create`, `route dns`), then point it at `http://127.0.0.1:8787`.
+- Your PC must stay on and connected while the tunnel runs.
+- Pause the failing Workers Builds while on the free plan: dashboard → **Workers & Pages → global-cv-agent → Settings → Builds → pause/disable**, or every push shows a red build.
+- Optional extra lock: Cloudflare **Zero Trust Access** (free up to 50 users) can require an additional login before anyone reaches the tunnel URL.
+
+## Host on Cloudflare (Containers, requires Workers Paid)
 
 The app runs as a container behind a tiny Worker (`worker/index.js`, routed as a single stateful instance). `wrangler deploy` builds the image, pushes it, and deploys both.
 

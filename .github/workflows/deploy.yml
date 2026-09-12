@@ -1,8 +1,10 @@
 name: Deploy to Cloudflare
 
+# Manual-only for now: Containers need the Workers Paid plan.
+# Re-enable push-to-deploy by uncommenting the push block after upgrading.
 on:
-  push:
-    branches: [main]
+  # push:
+  #   branches: [main]
   workflow_dispatch:
 
 # Container rollouts must not overlap — run deploys one at a time.
